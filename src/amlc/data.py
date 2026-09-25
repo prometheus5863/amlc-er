@@ -50,11 +50,11 @@ def pq(name: str, dev: bool = False) -> str:
 
 
 def convert(force: bool = False) -> None:
-    raw, out = raw_dir(), parquet_dir()
+    raw, out = raw_dir(), work_dir() / "parquet"
     out.mkdir(parents=True, exist_ok=True)
     con = _con()
     for name in FILES:
-        src, dst = raw / f"{name}.tsv", pq(name)
+        src, dst = raw / f"{name}.tsv", str(out / f"{name.split('/')[-1]}.parquet")
         if not force and __import__("os").path.exists(dst):
             print(f"skip {name} (exists)")
             continue
