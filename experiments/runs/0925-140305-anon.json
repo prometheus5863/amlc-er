@@ -1,0 +1,38 @@
+{
+ "id": "0925-140305-anon",
+ "name": "baseline-v1: rules+7 keys+LightGBM+assignment",
+ "user": "anon",
+ "time": "2026-09-25T14:03:05",
+ "git": "d558b1f-dirty",
+ "config_hash": "4664de9b",
+ "config": {
+  "decode": {
+   "mode": "threshold",
+   "gate": 0.3,
+   "gate_source": "max",
+   "pair": 0.7,
+   "rel": 0.0,
+   "max_k": null,
+   "max_per_source": null,
+   "min_prob": 0.0,
+   "ef_max_cands": 15,
+   "ef_samples": 400,
+   "seed": 0
+  },
+  "sample": 0.1,
+  "folds": 3
+ },
+ "local": 0.915784708703056,
+ "local_ci": [
+  0.915784708703056,
+  0.9149484994427888,
+  0.9166684245963955
+ ],
+ "spec": 0.9634235552304315,
+ "open_rate": 0.9620195336356511,
+ "f_open": 0.9490100707382891,
+ "singleton_frac": 0.055858743620943285,
+ "n_entities": 220252,
+ "lb": null,
+ "notes": "OOF, 10% S1 sample, full-density candidates"
+}

@@ -24,10 +24,10 @@ from .data import pq as pq_path
 from .features import FEATURES
 from .paths import work_dir
 
-PARAMS = dict(objective="binary", learning_rate=0.05, num_leaves=127, min_data_in_leaf=100,
+PARAMS = dict(objective="binary", learning_rate=0.1, num_leaves=127, min_data_in_leaf=100,
               feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0,
               verbose=-1, num_threads=0, seed=42)
-ROUNDS = 800
+ROUNDS = 500
 
 
 def W(name):
@@ -57,7 +57,7 @@ def assign_targets(df: pd.DataFrame, prob_col="prob", margin: float = 0.0) -> pd
     return df[prob_col].where(df[prob_col] >= best - margin, 0.0)
 
 
-def train(frac: float = 1.0, k: int = 5) -> None:
+def train(frac: float = 1.0, k: int = 3) -> None:
     from erharness import metric
     from erharness.analysis import oracles
     from erharness.decode import DecodeConfig
@@ -110,9 +110,24 @@ def train(frac: float = 1.0, k: int = 5) -> None:
                "rounds": int(np.mean([ROUNDS])), "local": report},
               open(W("decode.json"), "w"), indent=1, default=float)
     # final model on all sampled entities, fixed rounds = median best_iter was ~ early stop; refit
-    m = lgb.train(PARAMS, lgb.Dataset(f[FEATURES], y), num_boost_round=_refit_rounds(f, y, fold))
-    m.save_model(W("model.txt"))
+    del c
+    fit_final(f, y)
     print(f"\npicked '{pick}', saved model + decode.json  ({time.time() - t0:.0f}s)")
+
+
+def fit_final(f=None, y=None, frac: float = 0.1, rounds: int = ROUNDS) -> None:
+    """Final model on all (sampled) training pairs with a fixed number of rounds."""
+    if f is None:
+        f = pq.read_table(W("train_feats"), columns=["s1_id", "cand_id", *FEATURES]).to_pandas()
+        gt = load_gt_sets(sample_ids(frac))
+        f = f[f.s1_id.isin(gt)].reset_index(drop=True)
+        tp = {(s, c) for s, cs in gt.items() for c in cs}
+        y = np.fromiter(((s, c) in tp for s, c in zip(f.s1_id, f.cand_id)), bool, len(f))
+    X = f[FEATURES].to_numpy(np.float32)
+    del f
+    m = lgb.train(PARAMS, lgb.Dataset(X, y, feature_name=FEATURES, free_raw_data=True), num_boost_round=rounds)
+    m.save_model(W("model.txt"))
+    print(f"saved {W('model.txt')} ({rounds} rounds)", flush=True)
 
 
 def _refit_rounds(f, y, fold):
@@ -157,7 +172,9 @@ def predict() -> None:
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "train":
+    if sys.argv[1] == "fit":
+        fit_final()
+    elif sys.argv[1] == "train":
         train(float(sys.argv[sys.argv.index("--sample") + 1]) if "--sample" in sys.argv else 1.0)
     else:
         predict()
