@@ -22,7 +22,7 @@ import pyarrow.parquet as pq
 
 from .data import pq as pq_path
 from .features import FEATURES
-from .paths import work_dir
+from .paths import output_dir, work_dir
 
 PARAMS = dict(objective="binary", learning_rate=0.1, num_leaves=127, min_data_in_leaf=100,
               feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0,
@@ -161,8 +161,7 @@ def predict() -> None:
     c.to_parquet(W("test_scores.parquet"), index=False)
     use = c[["s1_id", "cand_id", cfg_all["prob_col"]]].rename(columns={cfg_all["prob_col"]: "prob"})
     ids = pq.read_table(pq_path("test_source1"), columns=["entity_id"]).to_pandas().entity_id.tolist()
-    out = work_dir().parent / "output" if (work_dir().parent / "output").exists() else work_dir() / "output"
-    out.mkdir(parents=True, exist_ok=True)
+    out = output_dir()
     sets = decode(Prepared(use, ids), cfg)
     write_match_sets(sets, str(out / "matching_results.tsv"), order=ids)
     write_candidate_pairs(c, str(out / "candidate_pairs.tsv"), order=ids)

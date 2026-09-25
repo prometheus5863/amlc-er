@@ -25,7 +25,7 @@ import time
 
 import duckdb
 
-from .paths import work_dir
+from .paths import mem as default_mem, threads, work_dir
 
 KEYS = ("addr", "tok", "pre", "skel", "num", "full", "tokat")
 CAP_TARGETS = {"addr": 60, "tok": 150, "pre": 60, "skel": 40, "num": 60, "full": 200, "tokat": 80}  # max S2+S3 per block
@@ -168,11 +168,12 @@ def recall_report(con, cands: str, gt: str) -> str:
     return "\n".join(lines)
 
 
-def run(split: str, mem: str = "5GB") -> None:
+def run(split: str, mem: str = None) -> None:
+    mem = mem or default_mem()
     norm, cands, keys = _paths(split)
     con = duckdb.connect()
     con.execute(f"SET memory_limit='{mem}'; SET enable_progress_bar=false; "
-                f"SET temp_directory='{work_dir() / 'work' / 'duck_tmp'}'; SET preserve_insertion_order=false; SET threads=2;")
+                f"SET temp_directory='{work_dir() / 'work' / 'duck_tmp'}'; SET preserve_insertion_order=false; SET threads={threads()};")
     t = time.time()
     build_keys(con, norm, keys)
     print(f"keys built {time.time() - t:.0f}s", flush=True)

@@ -21,7 +21,7 @@ import pyarrow.parquet as pq
 from rapidfuzz import fuzz, process
 from rapidfuzz.distance import JaroWinkler
 
-from .paths import work_dir
+from .paths import mem as default_mem, threads, work_dir
 
 from .blocking import KEYS
 
@@ -141,15 +141,16 @@ ATTRS = ["name_clean", "name_core", "name_concat", "name_skel", "legal", "is_dom
          "addr_clean", "house_no", "addr_nums", "street", "postcode", "country"]
 
 
-def run(split: str, sample: float = 1.0, mem: str = "3GB") -> str:
+def run(split: str, sample: float = 1.0, mem: str = None) -> str:
     """Writes <split>_feats/part<b>.parquet, one file per S1-hash bucket."""
     import os
     import shutil
     norm, cands, out, idf_path = _paths(split)
+    mem = mem or default_mem()
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
     con = duckdb.connect()
-    con.execute(f"SET memory_limit='{mem}'; SET enable_progress_bar=false; SET preserve_insertion_order=false; SET threads=2;")
+    con.execute(f"SET memory_limit='{mem}'; SET enable_progress_bar=false; SET preserve_insertion_order=false; SET threads={threads()};")
     _idf_table(con, norm, idf_path)
     idf_df = pq.read_table(idf_path).to_pandas()
     idf = dict(zip(zip(idf_df.country, idf_df.tok), idf_df.idf.astype(np.float32)))

@@ -49,19 +49,15 @@ On Kaggle nothing needs to be set: the code finds `/kaggle/input/...` by itself.
 3. Open `notebooks/00_start_here.ipynb` in VS Code, pick the `.venv` kernel, and run all cells.
    The first run converts the data to Parquet and builds the dev subset (takes a few minutes).
 
-## Run it on Kaggle (for teammates, and for GPU later)
+## Run it on Kaggle (the team's shared compute)
 
-1. Kaggle → **Create → New Notebook**.
-2. Right panel → **Add Input** → search for the challenge dataset → **Add**.
-3. Right panel → Settings → **Internet on** (needs a phone-verified account).
-4. First cell:
-   ```
-   !git clone https://github.com/<you>/amlc-er.git
-   %cd amlc-er
-   !pip install -q duckdb
-   ```
-   For a private repo, save a GitHub token under **Add-ons → Secrets** and clone with it.
-5. Upload `notebooks/00_start_here.ipynb` (File → Import notebook) or copy in its cells.
+The full pipeline runs in one Kaggle notebook: `notebooks/kaggle_pipeline.ipynb`.
+Setup for the team (dataset, sharing, GitHub token) is in **[TEAM.md](TEAM.md)**.
+Locally the same thing is one command:
+
+```
+python -m amlc.pipeline all        # data -> validated output/matching_results.tsv
+```
 
 ## Team rules
 
