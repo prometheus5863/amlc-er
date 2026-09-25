@@ -25,7 +25,7 @@ from .paths import mem as default_mem, threads, work_dir
 
 from .blocking import KEYS
 
-N_BUCKETS = 16
+N_BUCKETS = 48  # test split has ~100M pairs: ~2M per bucket keeps pandas under ~2 GB
 DROP_ONLY_KEYS = ("'tok'",)  # pairs found ONLY by these keys are skipped (cost >> recall; see blocking report)
 FEATURES = [
     "n_tset", "n_tsort", "n_concat_ratio", "n_concat_partial", "n_jw", "n_skel", "n_clean_ratio", "n_alias",

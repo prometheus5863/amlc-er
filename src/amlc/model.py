@@ -139,35 +139,70 @@ def _refit_rounds(f, y, fold):
 
 
 def predict() -> None:
-    """Scores test pairs bucket by bucket (never all ~100M pairs in memory),
-    then assigns targets and decodes."""
+    """Scores test pairs bucket by bucket, writing scores to disk, then does the
+    target assignment + decoding + both output files in DuckDB, so ~100M pairs
+    never have to fit in RAM. Same decision rule as erharness.decode (threshold mode)."""
     import glob
-    from erharness.decode import DecodeConfig, Prepared, decode
-    from erharness.io import write_candidate_pairs, write_match_sets
+    import os
+    import shutil
+
+    import duckdb
+    from .paths import mem, threads
 
     cfg_all = json.load(open(W("decode.json")))
-    cfg = DecodeConfig(**cfg_all["decode"])
+    cfg = cfg_all["decode"]
+    if cfg["mode"] != "threshold":
+        raise NotImplementedError("SQL decode supports threshold mode; use erharness.decode for expected_f")
     m = lgb.Booster(model_file=W("model.txt"))
-    parts = []
+    sdir = W("test_scores")
+    shutil.rmtree(sdir, ignore_errors=True)
+    os.makedirs(sdir)
     for p in sorted(glob.glob(W("test_feats") + "/*.parquet")):
-        f = pq.read_table(p).to_pandas()
+        f = pq.read_table(p, columns=["s1_id", "cand_id", *FEATURES]).to_pandas()
         c = f[["s1_id", "cand_id"]].copy()
-        c["prob_raw"] = m.predict(f[FEATURES]).astype(np.float32)
-        parts.append(c)
-        print(f"scored {p.split('/')[-1]}: {len(c):,} pairs", flush=True)
-        del f
-    c = pd.concat(parts, ignore_index=True)
-    c["prob"] = assign_targets(c, "prob_raw")
-    c.to_parquet(W("test_scores.parquet"), index=False)
-    use = c[["s1_id", "cand_id", cfg_all["prob_col"]]].rename(columns={cfg_all["prob_col"]: "prob"})
-    ids = pq.read_table(pq_path("test_source1"), columns=["entity_id"]).to_pandas().entity_id.tolist()
+        c["prob_raw"] = m.predict(f[FEATURES].to_numpy(np.float32)).astype(np.float32)
+        c.to_parquet(f"{sdir}/{os.path.basename(p)}", index=False)
+        print(f"scored {os.path.basename(p)}: {len(c):,} pairs", flush=True)
+        del f, c
+
+    con = duckdb.connect()
+    con.execute(f"SET memory_limit='{mem()}'; SET threads={threads()}; SET enable_progress_bar=false; "
+                f"SET temp_directory='{W('duck_tmp')}';")
+    assigned = cfg_all["prob_col"] == "prob"
+    prob = ("CASE WHEN prob_raw >= max(prob_raw) OVER (PARTITION BY cand_id) THEN prob_raw ELSE 0 END"
+            if assigned else "prob_raw")
+    gate = {"max": "maxp", "any": "anyp"}.get(cfg["gate_source"], "maxp")
+    extra = ""
+    if cfg.get("max_k"):
+        extra += f" AND rk <= {int(cfg['max_k'])}"
+    if cfg.get("max_per_source"):
+        extra += f" AND srk <= {int(cfg['max_per_source'])}"
+    ids = pq_path("test_source1")
     out = output_dir()
-    sets = decode(Prepared(use, ids), cfg)
-    write_match_sets(sets, str(out / "matching_results.tsv"), order=ids)
-    write_candidate_pairs(c, str(out / "candidate_pairs.tsv"), order=ids)
-    n_open = sum(bool(v) for v in sets.values())
-    print(f"wrote {out}/matching_results.tsv: {len(ids):,} rows, {n_open:,} non-empty, "
-          f"{sum(map(len, sets.values())):,} matches")
+    con.execute(f"""
+      CREATE TEMP TABLE sc AS SELECT s1_id, cand_id, {prob} AS prob FROM '{sdir}/*.parquet';
+      CREATE TEMP TABLE sc2 AS SELECT *,
+          max(prob) OVER (PARTITION BY s1_id) AS maxp,
+          1 - exp(sum(ln(greatest(1e-12, 1 - least(prob, 0.999999)))) OVER (PARTITION BY s1_id)) AS anyp,
+          row_number() OVER (PARTITION BY s1_id ORDER BY prob DESC, cand_id) AS rk,
+          row_number() OVER (PARTITION BY s1_id, substr(cand_id, 1, 2) ORDER BY prob DESC, cand_id) AS srk
+        FROM sc;
+      CREATE TEMP TABLE kept AS SELECT s1_id, string_agg(cand_id, ',' ORDER BY cand_id) AS ids
+        FROM sc2 WHERE {gate} >= {cfg['gate']} AND prob >= {cfg['pair']} AND prob >= {cfg['rel']} * maxp {extra}
+        GROUP BY 1;
+      CREATE TEMP TABLE cand AS SELECT s1_id, string_agg(cand_id, ',' ORDER BY cand_id) AS ids FROM sc GROUP BY 1;
+      CREATE TEMP TABLE s1 AS SELECT entity_id, row_number() OVER () AS ord FROM '{ids}';
+      COPY (SELECT s1.entity_id AS source1_entity_id, coalesce(k.ids, '') AS matched_entity_ids
+            FROM s1 LEFT JOIN kept k ON k.s1_id = s1.entity_id ORDER BY s1.ord)
+        TO '{out / "matching_results.tsv"}' (HEADER, DELIMITER '\t', QUOTE '');
+      COPY (SELECT s1.entity_id AS source1_entity_id, coalesce(c.ids, '') AS candidate_entity_ids
+            FROM s1 LEFT JOIN cand c ON c.s1_id = s1.entity_id ORDER BY s1.ord)
+        TO '{out / "candidate_pairs.tsv"}' (HEADER, DELIMITER '\t', QUOTE '');
+    """)
+    n_rows, n_open, n_match = con.execute(
+        "SELECT (SELECT count(*) FROM s1), (SELECT count(*) FROM kept), "
+        "(SELECT coalesce(sum(len(string_split(ids, ','))), 0) FROM kept)").fetchone()
+    print(f"wrote {out}/matching_results.tsv: {n_rows:,} rows, {n_open:,} non-empty, {n_match:,} matches", flush=True)
 
 
 if __name__ == "__main__":
