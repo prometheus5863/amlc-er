@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+data/
+configs/paths.local.json
+output/*.tsv
+*.zip
