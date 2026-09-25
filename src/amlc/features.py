@@ -26,6 +26,7 @@ from .paths import work_dir
 from .blocking import KEYS
 
 N_BUCKETS = 16
+DROP_ONLY_KEYS = ("'tok'",)  # pairs found ONLY by these keys are skipped (cost >> recall; see blocking report)
 FEATURES = [
     "n_tset", "n_tsort", "n_concat_ratio", "n_concat_partial", "n_jw", "n_skel", "n_clean_ratio", "n_alias",
     "n_idf_overlap", "n_shared_max_idf", "n_unshared_max_idf", "n_len_diff", "n_tok_a", "n_tok_b",
@@ -165,7 +166,8 @@ def run(split: str, sample: float = 1.0, mem: str = "3GB") -> str:
           JOIN tcount t USING (cand_id)
           JOIN '{norm}' a ON a.entity_id = c.s1_id
           JOIN '{norm}' b ON b.entity_id = c.cand_id
-          WHERE (hash(c.s1_id) % {N_BUCKETS}) = {b} {samp}""").df()
+          WHERE (hash(c.s1_id) % {N_BUCKETS}) = {b} {samp}
+            AND c.keys NOT IN ({", ".join(DROP_ONLY_KEYS)})""").df()
         if len(df):
             f = pair_features(df, idf)
             f["t_ncands"] = df.t_ncands.values
