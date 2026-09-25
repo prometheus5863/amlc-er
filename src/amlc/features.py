@@ -54,10 +54,13 @@ def _cp(a, b, scorer, **kw):
     return process.cpdist(a, b, scorer=scorer, workers=-1, dtype=np.float32, **kw) / 100.0
 
 
+_IDF_DEFAULT = 16.3  # ln(#records); set per split in run()
+
+
 def _idf_feats(core_a, core_b, country, idf):
     n = len(core_a)
     ov, smax, umax = np.zeros(n, np.float32), np.zeros(n, np.float32), np.zeros(n, np.float32)
-    default = 12.0
+    default = _IDF_DEFAULT
     for i in range(n):
         ta, tb = set(core_a[i].split()), set(core_b[i].split())
         if not ta or not tb:
@@ -146,15 +149,20 @@ def run(split: str, sample: float = 1.0, mem: str = None) -> str:
     import os
     import shutil
     norm, cands, out, idf_path = _paths(split)
-    mem = mem or default_mem()
+    mem = mem or os.environ.get("AMLC_FEAT_MEM", "2GB")  # python side needs the rest of the RAM
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
     con = duckdb.connect()
     con.execute(f"SET memory_limit='{mem}'; SET enable_progress_bar=false; SET preserve_insertion_order=false; SET threads={threads()};")
     _idf_table(con, norm, idf_path)
-    idf_df = pq.read_table(idf_path).to_pandas()
+    # only tokens seen >= 2 times are stored; unseen/singleton tokens get the max idf ln(N)
+    n_rec = con.execute(f"SELECT count(*) FROM '{norm}'").fetchone()[0]
+    global _IDF_DEFAULT
+    _IDF_DEFAULT = float(np.log(n_rec))
+    idf_df = con.execute(f"SELECT country, tok, idf FROM '{idf_path}' WHERE idf < {_IDF_DEFAULT - 1e-6}").df()
     idf = dict(zip(zip(idf_df.country, idf_df.tok), idf_df.idf.astype(np.float32)))
     del idf_df
+    import gc; gc.collect()
     con.execute(f"CREATE TEMP TABLE tcount AS SELECT cand_id, count(*)::INT AS t_ncands FROM '{cands}' GROUP BY 1")
     sel_a = ", ".join(f"a.{c} AS {c}_a" for c in ATTRS)
     sel_b = ", ".join(f"b.{c} AS {c}_b" for c in ATTRS)
