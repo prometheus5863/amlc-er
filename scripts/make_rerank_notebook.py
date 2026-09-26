@@ -15,12 +15,14 @@ measures the gain on **unseen businesses**, and writes a new `matching_results.t
 3. **Add Input → Your Work → Notebooks** → the finished **pipeline** notebook version (v4). Its `output/rerank/` folder is the input here.
 4. **Internet: On** and **Secrets → `GITHUB_TOKEN`** ticked (same as the pipeline notebook).
 
-Then **Save Version → Save & Run All**. ~1.5–2.5 h. Result: `output/rerank_result.json` (stage 1 vs blended on unseen
+Then **Save Version → Save & Run All**. ~3 h with bge-m3 (`BIG = True`), ~1 h with MiniLM. If bge-m3 runs out of GPU memory, set `BIG = False` and re-run. Result: `output/rerank_result.json` (stage 1 vs blended on unseen
 businesses) and, if blended wins, `output/matching_results.tsv` + `candidate_pairs.tsv` ready to submit."""),
     code("""BRANCH = "v3"
 REPO = "prometheus5863/amlc-er"
 N_TRAIN = 1_500_000      # cross-encoder fine-tuning pairs (uncertain band only)
-BASE = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"   # Apache-2.0, 50+ languages"""),
+BIG = True               # True: BAAI/bge-m3 (MIT, 568M, 100+ languages, ~3 h)   False: multilingual MiniLM (Apache-2.0, ~1 h)
+BASE, BS, LR = (("BAAI/bge-m3", 32, 2e-5) if BIG else
+                ("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", 128, 5e-5))"""),
     code("""import os, subprocess, sys
 token = ""
 try:
@@ -41,7 +43,8 @@ import torch; print("GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_avail
 hits = glob.glob("/kaggle/input/**/rerank/train_pairs.parquet", recursive=True)
 assert hits, "pipeline output not found: Add Input -> Your Work -> the finished pipeline notebook (needs output/rerank/)"
 IN = os.path.dirname(hits[0]); print("re-ranker input:", IN, os.listdir(IN))
-env = {**os.environ, "PYTHONPATH": "/tmp/amlc-er/src:/tmp/amlc-er", "AMLC_CE_MODEL": BASE, "AMLC_CE_NTRAIN": str(N_TRAIN)}
+env = {**os.environ, "PYTHONPATH": "/tmp/amlc-er/src:/tmp/amlc-er", "AMLC_CE_MODEL": BASE, "AMLC_CE_NTRAIN": str(N_TRAIN),
+       "AMLC_CE_BS": str(BS), "AMLC_CE_LR": str(LR)}
 # raw TSV -> parquet (texts + test S1 order), ~1-2 min
 subprocess.run([sys.executable, "-c", "from amlc import data; data.convert()"], cwd="/tmp/amlc-er", env=env, check=True)
 p = subprocess.Popen([sys.executable, "-u", "-m", "amlc.rerank", "run", IN, "/kaggle/working/output"],
