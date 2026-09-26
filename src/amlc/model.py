@@ -165,48 +165,70 @@ def predict() -> None:
         print(f"scored {os.path.basename(p)}: {len(c):,} pairs", flush=True)
         del f, c
 
+    decode_sql(cfg_all)
+
+
+def decode_sql(cfg_all=None) -> None:
+    """Target assignment + thresholds + both output files, in small DuckDB passes
+    (plain GROUP BYs and joins written to disk; no big window functions)."""
+    import duckdb
+    from .paths import mem, threads
+
+    cfg_all = cfg_all or json.load(open(W("decode.json")))
+    cfg = cfg_all["decode"]
+    sdir = W("test_scores")
+    tmp = W("decode_tmp")
+    import os
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
     con = duckdb.connect()
     con.execute(f"SET memory_limit='{mem()}'; SET threads={threads()}; SET enable_progress_bar=false; "
-                f"SET temp_directory='{W('duck_tmp')}';")
-    assigned = cfg_all["prob_col"] == "prob"
-    prob = ("CASE WHEN prob_raw >= max(prob_raw) OVER (PARTITION BY cand_id) THEN prob_raw ELSE 0 END"
-            if assigned else "prob_raw")
-    gate = {"max": "maxp", "any": "anyp"}.get(cfg["gate_source"], "maxp")
-    extra = ""
-    if cfg.get("max_k"):
-        extra += f" AND rk <= {int(cfg['max_k'])}"
-    if cfg.get("max_per_source"):
-        extra += f" AND srk <= {int(cfg['max_per_source'])}"
+                f"SET preserve_insertion_order=false; SET temp_directory='{W('duck_tmp')}';")
+    sc = f"'{sdir}/*.parquet'"
+    if cfg_all["prob_col"] == "prob":   # each target keeps its score only for its best S1
+        con.execute(f"COPY (SELECT cand_id, max(prob_raw) AS best FROM {sc} GROUP BY 1) TO '{tmp}/best.parquet'")
+        con.execute(f"""COPY (SELECT s.s1_id, s.cand_id,
+                              CASE WHEN s.prob_raw >= b.best THEN s.prob_raw ELSE 0 END AS prob
+                            FROM {sc} s JOIN '{tmp}/best.parquet' b USING (cand_id))
+                        TO '{tmp}/prob.parquet'""")
+    else:
+        con.execute(f"COPY (SELECT s1_id, cand_id, prob_raw AS prob FROM {sc}) TO '{tmp}/prob.parquet'")
+    P = f"'{tmp}/prob.parquet'"
+    gate_expr = ("1 - exp(sum(ln(greatest(1e-12, 1 - least(prob, 0.999999)))))"
+                 if cfg["gate_source"] == "any" else "max(prob)")
+    con.execute(f"COPY (SELECT s1_id, max(prob) AS maxp, {gate_expr} AS g FROM {P} GROUP BY 1) TO '{tmp}/ent.parquet'")
+    if cfg.get("max_k") or cfg.get("max_per_source"):
+        raise NotImplementedError("max_k / max_per_source not supported in decode_sql yet")
+    con.execute(f"""COPY (SELECT p.s1_id, string_agg(p.cand_id, ',' ORDER BY p.cand_id) AS ids
+                          FROM {P} p JOIN '{tmp}/ent.parquet' e USING (s1_id)
+                          WHERE e.g >= {cfg['gate']} AND p.prob >= {cfg['pair']} AND p.prob >= {cfg['rel']} * e.maxp
+                          GROUP BY 1) TO '{tmp}/kept.parquet'""")
+    # candidate lists: score files are already partitioned by S1 bucket, so aggregate file by file
+    import glob as _g
+    os.makedirs(f"{tmp}/cand", exist_ok=True)
+    for i, f in enumerate(sorted(_g.glob(f"{sdir}/*.parquet"))):
+        con.execute(f"""COPY (SELECT s1_id, string_agg(cand_id, ',' ORDER BY cand_id) AS ids FROM '{f}' GROUP BY 1)
+                        TO '{tmp}/cand/{i:03d}.parquet'""")
     ids = pq_path("test_source1")
     out = output_dir()
-    con.execute(f"""
-      CREATE TEMP TABLE sc AS SELECT s1_id, cand_id, {prob} AS prob FROM '{sdir}/*.parquet';
-      CREATE TEMP TABLE sc2 AS SELECT *,
-          max(prob) OVER (PARTITION BY s1_id) AS maxp,
-          1 - exp(sum(ln(greatest(1e-12, 1 - least(prob, 0.999999)))) OVER (PARTITION BY s1_id)) AS anyp,
-          row_number() OVER (PARTITION BY s1_id ORDER BY prob DESC, cand_id) AS rk,
-          row_number() OVER (PARTITION BY s1_id, substr(cand_id, 1, 2) ORDER BY prob DESC, cand_id) AS srk
-        FROM sc;
-      CREATE TEMP TABLE kept AS SELECT s1_id, string_agg(cand_id, ',' ORDER BY cand_id) AS ids
-        FROM sc2 WHERE {gate} >= {cfg['gate']} AND prob >= {cfg['pair']} AND prob >= {cfg['rel']} * maxp {extra}
-        GROUP BY 1;
-      CREATE TEMP TABLE cand AS SELECT s1_id, string_agg(cand_id, ',' ORDER BY cand_id) AS ids FROM sc GROUP BY 1;
-      CREATE TEMP TABLE s1 AS SELECT entity_id, row_number() OVER () AS ord FROM '{ids}';
-      COPY (SELECT s1.entity_id AS source1_entity_id, coalesce(k.ids, '') AS matched_entity_ids
-            FROM s1 LEFT JOIN kept k ON k.s1_id = s1.entity_id ORDER BY s1.ord)
-        TO '{out / "matching_results.tsv"}' (HEADER, DELIMITER '\t', QUOTE '');
-      COPY (SELECT s1.entity_id AS source1_entity_id, coalesce(c.ids, '') AS candidate_entity_ids
-            FROM s1 LEFT JOIN cand c ON c.s1_id = s1.entity_id ORDER BY s1.ord)
-        TO '{out / "candidate_pairs.tsv"}' (HEADER, DELIMITER '\t', QUOTE '');
-    """)
+    con.execute(f"CREATE TEMP TABLE s1 AS SELECT entity_id, row_number() OVER () AS ord FROM '{ids}'")
+    for fname, src, col in [("matching_results.tsv", "kept", "matched_entity_ids"),
+                            ("candidate_pairs.tsv", "cand", "candidate_entity_ids")]:
+        con.execute(f"""COPY (SELECT s1.entity_id AS source1_entity_id, coalesce(k.ids, '') AS {col}
+                              FROM s1 LEFT JOIN '{tmp}/{src}{"/*" if src == "cand" else ""}.parquet' k
+                                ON k.s1_id = s1.entity_id ORDER BY s1.ord)
+                        TO '{out / fname}' (HEADER, DELIMITER '\t', QUOTE '')""")
     n_rows, n_open, n_match = con.execute(
-        "SELECT (SELECT count(*) FROM s1), (SELECT count(*) FROM kept), "
-        "(SELECT coalesce(sum(len(string_split(ids, ','))), 0) FROM kept)").fetchone()
+        f"SELECT (SELECT count(*) FROM s1), (SELECT count(*) FROM '{tmp}/kept.parquet'), "
+        f"(SELECT coalesce(sum(len(string_split(ids, ','))), 0) FROM '{tmp}/kept.parquet')").fetchone()
     print(f"wrote {out}/matching_results.tsv: {n_rows:,} rows, {n_open:,} non-empty, {n_match:,} matches", flush=True)
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "fit":
+    if sys.argv[1] == "decode":
+        decode_sql()
+    elif sys.argv[1] == "fit":
         fit_final()
     elif sys.argv[1] == "train":
         train(float(sys.argv[sys.argv.index("--sample") + 1]) if "--sample" in sys.argv else 1.0)

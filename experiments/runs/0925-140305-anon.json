@@ -33,6 +33,7 @@
  "f_open": 0.9490100707382891,
  "singleton_frac": 0.055858743620943285,
  "n_entities": 220252,
- "lb": null,
- "notes": "OOF, 10% S1 sample, full-density candidates"
+ "lb": 0.897,
+ "notes": "OOF, 10% S1 sample, full-density candidates | first LB submission 26 Sep 08:30 IST",
+ "lb_time": "2026-09-26T03:09:32"
 }
