@@ -163,8 +163,10 @@ def run(split: str, sample: float = 1.0, mem: str = None) -> str:
     import shutil
     norm, cands, out, idf_path = _paths(split)
     mem = mem or os.environ.get("AMLC_FEAT_MEM", "2GB")  # python side needs the rest of the RAM
-    shutil.rmtree(out, ignore_errors=True)
-    os.makedirs(out)
+    resume = os.environ.get("AMLC_RESUME") == "1"   # keep finished buckets (interrupted runs)
+    if not resume:
+        shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out, exist_ok=True)
     con = duckdb.connect()
     con.execute(f"SET memory_limit='{mem}'; SET enable_progress_bar=false; SET preserve_insertion_order=false; SET threads={threads()};")
     _idf_table(con, norm, idf_path)
@@ -188,6 +190,8 @@ def run(split: str, sample: float = 1.0, mem: str = None) -> str:
     samp = f"AND (hash(c.s1_id) % 1000) < {int(sample * 1000)}" if sample < 1 else ""
     t0, total = time.time(), 0
     for b in range(N_BUCKETS):
+        if resume and os.path.exists(f"{out}/part{b:02d}.parquet"):
+            continue
         df = con.execute(f"""
           SELECT c.s1_id, c.cand_id, c.keys, t.t_ncands, {sel_a}, {sel_b},
                  na.nf_s1 AS nf_s1_a, nb.nf_s1 AS nf_s1_b, nb.nf_t AS nf_t_b, nl.nf_s1_lg AS nf_s1_lg_b
