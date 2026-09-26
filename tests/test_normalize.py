@@ -47,3 +47,11 @@ def test_addresses():
     fr = norm_address("(67) R. SAINTE-THÉRÈSE, ROUBAIX, Nord", "France")
     assert fr[0].startswith("67 rue sainte therese")
     assert norm_address("Plot No-1154, Bhubaneswar, Orissa 751019", "India")[4] == "751019"
+
+
+def test_phonetic_translit_english():
+    from amlc.normalize import phonetic
+    for a, b in [("dynamictrading", "dayanamiktrading"), ("skylogistics", "skailajistikas"),
+                 ("blackinfotech", "blaikinfotek"), ("futureventures", "fyucharvencars")]:
+        assert phonetic(a) == phonetic(b), (a, b)
+    assert phonetic("ramventures") != phonetic("shyamventures")

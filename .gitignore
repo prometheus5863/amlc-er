@@ -7,3 +7,4 @@ data/
 configs/paths.local.json
 output/*.tsv
 *.zip
+logs/

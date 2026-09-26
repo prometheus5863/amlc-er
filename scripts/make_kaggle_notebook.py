@@ -15,7 +15,7 @@ Runs the whole pipeline from the team repo and writes a **validated** `matching_
 
 Then **Save Version → Save & Run All (Commit)**. It runs in the background (~3–4 h on CPU) and the files appear under **Output**.
 To try your own changes: push a branch and set `BRANCH` below."""),
-    code("""BRANCH = "v2"                 # <- change to your branch
+    code("""BRANCH = "v3"                 # <- change to your branch
 SAMPLE = 0.2                   # share of Source-1 entities used for training (Kaggle RAM allows 0.2-0.3)
 ROUNDS, LR = 1500, 0.06        # LightGBM rounds cap (early stopping) and learning rate
 REPO = "prometheus5863/amlc-er\""""),

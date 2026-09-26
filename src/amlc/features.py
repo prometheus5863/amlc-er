@@ -19,7 +19,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from rapidfuzz import fuzz, process
-from rapidfuzz.distance import JaroWinkler
+from rapidfuzz.distance import JaroWinkler, Levenshtein
 
 from .paths import mem as default_mem, threads, work_dir
 
@@ -32,6 +32,9 @@ FEATURES = [
     "n_idf_overlap", "n_shared_max_idf", "n_unshared_max_idf", "n_len_diff", "n_tok_a", "n_tok_b",
     "legal_same", "legal_conflict", "legal_missing", "dom_any", "translit_any",
     "a_tset", "a_ratio", "a_street", "house_eq", "nums_jacc", "post_eq", "addr_empty",
+    # v3: sound-key similarity, global name frequency (is this exact name shared by other S1
+    # businesses?), which side lacks an address, house-number near-misses (2827 vs 2825)
+    "n_phon", "nf_s1_a", "nf_s1_b", "nf_s1_lg_b", "nf_t_b", "addr_empty_s1", "addr_empty_t", "house_near",
     "is_s3", "n_keys", *[f"k_{k}" for k in KEYS],
     "s1_ncands", "t_ncands", "rank_in_s1", "gap_to_best_s1",
 ]
@@ -121,6 +124,16 @@ def pair_features(df: pd.DataFrame, idf: dict) -> pd.DataFrame:
     f["post_eq"] = np.where((pa_ == "") | (pb_ == ""), -1, (pa_ == pb_).astype(int)).astype(np.int8)
     f["addr_empty"] = empty.astype(np.int8)
 
+    f["n_phon"] = _cp(df.name_phon_a.tolist(), df.name_phon_b.tolist(), fuzz.ratio)
+    for c in ("nf_s1_a", "nf_s1_b", "nf_s1_lg_b", "nf_t_b"):
+        f[c] = df[c].fillna(0).to_numpy(np.int32)
+    f["addr_empty_s1"] = (df.addr_clean_a.values == "").astype(np.int8)
+    f["addr_empty_t"] = (df.addr_clean_b.values == "").astype(np.int8)
+    hd = process.cpdist(list(ha), list(hb), scorer=Levenshtein.distance, workers=-1)
+    near = (hd <= 1) | np.array([bool(a) and bool(b) and (a.startswith(b) or b.startswith(a) or a.endswith(b) or b.endswith(a))
+                                 for a, b in zip(ha, hb)])
+    f["house_near"] = np.where((ha == "") | (hb == ""), -1, np.where(ha == hb, 2, near.astype(int))).astype(np.int8)
+
     f["is_s3"] = (df.cand_id.str[:2].values == "S3").astype(np.int8)
     keys = [set(s.split("|")) for s in df["keys"].values]
     for k in KEYS:
@@ -140,7 +153,7 @@ def add_context(f: pd.DataFrame) -> pd.DataFrame:
     return f
 
 
-ATTRS = ["name_clean", "name_core", "name_concat", "name_skel", "legal", "is_domain", "is_translit", "alias_core",
+ATTRS = ["name_clean", "name_core", "name_concat", "name_skel", "name_phon", "legal", "is_domain", "is_translit", "alias_core",
          "addr_clean", "house_no", "addr_nums", "street", "postcode", "country"]
 
 
@@ -164,17 +177,27 @@ def run(split: str, sample: float = 1.0, mem: str = None) -> str:
     del idf_df
     import gc; gc.collect()
     con.execute(f"CREATE TEMP TABLE tcount AS SELECT cand_id, count(*)::INT AS t_ncands FROM '{cands}' GROUP BY 1")
+    # how many S1 businesses / S2+S3 records carry exactly this name (per country)
+    con.execute(f"""CREATE TEMP TABLE nf AS SELECT country, name_concat,
+                      count(*) FILTER (WHERE src = 'S1')::INT AS nf_s1, count(*) FILTER (WHERE src <> 'S1')::INT AS nf_t
+                    FROM '{norm}' GROUP BY 1, 2""")
+    con.execute(f"""CREATE TEMP TABLE nfl AS SELECT country, name_concat, legal, count(*)::INT AS nf_s1_lg
+                    FROM '{norm}' WHERE src = 'S1' GROUP BY 1, 2, 3""")
     sel_a = ", ".join(f"a.{c} AS {c}_a" for c in ATTRS)
     sel_b = ", ".join(f"b.{c} AS {c}_b" for c in ATTRS)
     samp = f"AND (hash(c.s1_id) % 1000) < {int(sample * 1000)}" if sample < 1 else ""
     t0, total = time.time(), 0
     for b in range(N_BUCKETS):
         df = con.execute(f"""
-          SELECT c.s1_id, c.cand_id, c.keys, t.t_ncands, {sel_a}, {sel_b}
+          SELECT c.s1_id, c.cand_id, c.keys, t.t_ncands, {sel_a}, {sel_b},
+                 na.nf_s1 AS nf_s1_a, nb.nf_s1 AS nf_s1_b, nb.nf_t AS nf_t_b, nl.nf_s1_lg AS nf_s1_lg_b
           FROM '{cands}' c
           JOIN tcount t USING (cand_id)
           JOIN '{norm}' a ON a.entity_id = c.s1_id
           JOIN '{norm}' b ON b.entity_id = c.cand_id
+          LEFT JOIN nf na ON na.country = a.country AND na.name_concat = a.name_concat
+          LEFT JOIN nf nb ON nb.country = b.country AND nb.name_concat = b.name_concat
+          LEFT JOIN nfl nl ON nl.country = b.country AND nl.name_concat = b.name_concat AND nl.legal = b.legal
           WHERE (hash(c.s1_id) % {N_BUCKETS}) = {b} {samp}
             AND c.keys NOT IN ({", ".join(DROP_ONLY_KEYS)})""").df()
         if len(df):
