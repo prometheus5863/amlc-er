@@ -261,7 +261,7 @@ def run(in_dir: str, out_dir: str = None) -> dict:
 
     ev_ids = {s for s, p in part.items() if p == "ev"}
     ev = tr[tr.s1_id.isin(ev_ids)].copy()
-    ev["p2"] = ev.p1
+    ev["p2"] = ev.p1.astype("float64")
     m = held.part == "ev"
     ev.loc[held.index[m], "p2"] = blend_apply(bl, held.p1[m], held.ce[m])
     gev = {s: gt[s] for s in ev_ids}
@@ -278,7 +278,7 @@ def run(in_dir: str, out_dir: str = None) -> dict:
     json.dump(res, open(f"{out_dir}/rerank_result.json", "w"), indent=1, default=float)
 
     if te is not None:
-        te["p2"] = te.p1
+        te["p2"] = te.p1.astype("float64")
         idx = np.flatnonzero(tband.to_numpy())
         ce_t = predict(tok, model, T(te.s1_id.iloc[idx]), T(te.cand_id.iloc[idx]))
         te.iloc[idx, te.columns.get_loc("p2")] = blend_apply(bl, te.p1.iloc[idx], ce_t)
