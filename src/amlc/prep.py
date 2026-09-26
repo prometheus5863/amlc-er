@@ -20,7 +20,7 @@ from .data import pq as pq_path
 from .normalize import normalize_frame
 from .paths import work_dir
 
-KEEP = ["entity_id", "src", "country", "name_clean", "name_core", "name_concat", "name_skel", "legal",
+KEEP = ["entity_id", "src", "country", "name_clean", "name_core", "name_concat", "name_skel", "name_phon", "legal",
         "is_domain", "is_translit", "alias_core", "addr_clean", "house_no", "addr_nums", "street", "postcode"]
 CHUNK = 250_000
 

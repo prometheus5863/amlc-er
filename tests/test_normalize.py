@@ -55,3 +55,11 @@ def test_phonetic_translit_english():
                  ("blackinfotech", "blaikinfotek"), ("futureventures", "fyucharvencars")]:
         assert phonetic(a) == phonetic(b), (a, b)
     assert phonetic("ramventures") != phonetic("shyamventures")
+
+
+def test_prep_keeps_every_column_later_steps_read():
+    """Blocking/features read these from <split>_norm.parquet; prep must keep them."""
+    import re
+    from amlc import blocking, features, prep
+    need = set(features.ATTRS) | {"name_phon", "name_skel", "house_no", "street", "addr_clean", "country", "src"}
+    assert need <= set(prep.KEEP), need - set(prep.KEEP)
