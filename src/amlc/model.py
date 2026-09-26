@@ -21,7 +21,10 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from .data import pq as pq_path
-from .features import FEATURES
+from .features import FEATURES as PAIR_FEATURES
+from .tokdiff import TOK_FEATURES
+
+FEATURES = PAIR_FEATURES + TOK_FEATURES   # model inputs; TOK_* are added at model time (tokdiff.py)
 from .paths import output_dir, work_dir
 
 import os as _os
@@ -67,7 +70,7 @@ def train(frac: float = 1.0, k: int = int(_os.environ.get("AMLC_FOLDS", "3"))) -
     from erharness.sweep import Scorer, best_config, grid_search
 
     t0 = time.time()
-    f = pq.read_table(W("train_feats")).to_pandas()
+    f = pq.read_table(W("train_feats"), columns=["s1_id", "cand_id", *PAIR_FEATURES]).to_pandas()
     ids = sample_ids(frac)
     gt = load_gt_sets(ids)
     f = f[f.s1_id.isin(gt)].reset_index(drop=True)
@@ -75,6 +78,8 @@ def train(frac: float = 1.0, k: int = int(_os.environ.get("AMLC_FOLDS", "3"))) -
     y = np.fromiter(((s, c) in true_pairs for s, c in zip(f.s1_id, f.cand_id)), bool, len(f))
     fold_of = kfold(gt, k)
     fold = f.s1_id.map(fold_of).to_numpy()
+    from . import tokdiff
+    tokdiff.add_train(f, y, fold)
     print(f"{len(f):,} pairs, {y.mean():.4f} positive, {len(gt):,} S1 entities  ({time.time() - t0:.0f}s)", flush=True)
 
     oof = np.zeros(len(f))
@@ -120,11 +125,14 @@ def train(frac: float = 1.0, k: int = int(_os.environ.get("AMLC_FOLDS", "3"))) -
 def fit_final(f=None, y=None, frac: float = 0.1, rounds: int = ROUNDS) -> None:
     """Final model on all (sampled) training pairs with a fixed number of rounds."""
     if f is None:
-        f = pq.read_table(W("train_feats"), columns=["s1_id", "cand_id", *FEATURES]).to_pandas()
+        f = pq.read_table(W("train_feats"), columns=["s1_id", "cand_id", *PAIR_FEATURES]).to_pandas()
         gt = load_gt_sets(sample_ids(frac))
         f = f[f.s1_id.isin(gt)].reset_index(drop=True)
         tp = {(s, c) for s, cs in gt.items() for c in cs}
         y = np.fromiter(((s, c) in tp for s, c in zip(f.s1_id, f.cand_id)), bool, len(f))
+        from erharness.splits import kfold
+        from . import tokdiff
+        tokdiff.add_train(f, y, f.s1_id.map(kfold(gt, int(_os.environ.get("AMLC_FOLDS", "3")))).to_numpy())
     X = f[FEATURES].to_numpy(np.float32)
     del f
     m = lgb.train(PARAMS, lgb.Dataset(X, y, feature_name=FEATURES, free_raw_data=True), num_boost_round=rounds)
@@ -159,8 +167,11 @@ def predict() -> None:
     sdir = W("test_scores")
     shutil.rmtree(sdir, ignore_errors=True)
     os.makedirs(sdir)
+    from . import tokdiff
+    names = tokdiff._names("test", pq.read_table(W("test_norm.parquet"), columns=["entity_id"]).column(0).to_numpy())
     for p in sorted(glob.glob(W("test_feats") + "/*.parquet")):
-        f = pq.read_table(p, columns=["s1_id", "cand_id", *FEATURES]).to_pandas()
+        f = pq.read_table(p, columns=["s1_id", "cand_id", *PAIR_FEATURES]).to_pandas()
+        tokdiff.add_test(f, names=names)
         c = f[["s1_id", "cand_id"]].copy()
         c["prob_raw"] = m.predict(f[FEATURES].to_numpy(np.float32)).astype(np.float32)
         c.to_parquet(f"{sdir}/{os.path.basename(p)}", index=False)
