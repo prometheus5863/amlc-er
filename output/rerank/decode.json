@@ -1,0 +1,65 @@
+{
+ "prob_col": "prob",
+ "decode": {
+  "mode": "threshold",
+  "gate": 0.3,
+  "gate_source": "max",
+  "pair": 0.7,
+  "rel": 0.0,
+  "max_k": null,
+  "max_per_source": null,
+  "min_prob": 0.0,
+  "ef_max_cands": 15,
+  "ef_samples": 400,
+  "seed": 0
+ },
+ "rounds": 500,
+ "local": {
+  "raw": {
+   "config": {
+    "mode": "threshold",
+    "gate": 0.3,
+    "gate_source": "max",
+    "pair": 0.7,
+    "rel": 0.0,
+    "max_k": null,
+    "max_per_source": null,
+    "min_prob": 0.0,
+    "ef_max_cands": 15,
+    "ef_samples": 400,
+    "seed": 0
+   },
+   "gate": 0.3,
+   "pair": 0.7,
+   "score": 0.9156315604864639,
+   "spec": 0.9626920263350403,
+   "open_rate": 0.9620435779926809,
+   "f_open": 0.948862730736717,
+   "avg_set_size": 3.20477769742912,
+   "score_smooth": 0.9153298892954528
+  },
+  "assigned": {
+   "config": {
+    "mode": "threshold",
+    "gate": 0.3,
+    "gate_source": "max",
+    "pair": 0.7,
+    "rel": 0.0,
+    "max_k": null,
+    "max_per_source": null,
+    "min_prob": 0.0,
+    "ef_max_cands": 15,
+    "ef_samples": 400,
+    "seed": 0
+   },
+   "gate": 0.3,
+   "pair": 0.7,
+   "score": 0.915784708703056,
+   "spec": 0.9634235552304315,
+   "open_rate": 0.9620195336356511,
+   "f_open": 0.9490100707382891,
+   "avg_set_size": 3.203879282397594,
+   "score_smooth": 0.9154844185024927
+  }
+ }
+}
