@@ -23,6 +23,11 @@ keys
   addr2  two rarest address words, name ignored      "India|chawl|thakkar" (garbled / transliterated names)
   phonhs sound key prefix + house number             "India|dnmktr|7"
   phonat sound key prefix + rarest address word      "India|dnmk|krishna"
+  hsat   house number + one of the 2 rarest address words, name ignored   "India|24|transport"
+  hop    (after blocking) targets that are near-duplicates of a STRONG candidate (>= 4 shared keys):
+         same sound key, same full address, or same house number + sound-key start
+v4 (full-train misses): hsat recovers 3.8k and hop 3.4k of 28k missed pairs; skelat/skelhs dropped
+(1.5k unique true pairs for 14.6M pairs).
 The output has one row per (s1_id, cand_id) with `keys` = '|'-joined key names.
 """
 from __future__ import annotations
@@ -35,13 +40,14 @@ import duckdb
 from .paths import mem as default_mem, threads, work_dir
 
 KEYS = ("addr", "tok", "pre", "skel", "num", "full", "tokat",
-        "prehs", "skelhs", "prest", "skelat", "addr2", "phonhs", "phonat")
+        "prehs", "prest", "addr2", "phonhs", "phonat", "hsat", "hop")
+BLOCK_KEYS = KEYS[:-1]   # 'hop' is not a blocking key: it is added after blocking (add_hops)
 CAP_TARGETS = {"addr": 60, "tok": 150, "pre": 60, "skel": 40, "num": 60, "full": 200, "tokat": 80,
                "prehs": 60, "skelhs": 60, "prest": 60, "skelat": 60, "addr2": 60,
-               "phonhs": 60, "phonat": 60}   # max S2+S3 per block
+               "phonhs": 60, "phonat": 60, "hsat": 60}   # max S2+S3 per block
 CAP_S1 = {"addr": 25, "tok": 60, "pre": 25, "skel": 15, "num": 25, "full": 80, "tokat": 30,
           "prehs": 25, "skelhs": 25, "prest": 25, "skelat": 25, "addr2": 25,
-          "phonhs": 25, "phonat": 25}         # max S1 per block
+          "phonhs": 25, "phonat": 25, "hsat": 25}         # max S1 per block
 # v2 keys (from the missed-pair breakdown): 60% of misses shared a name key whose block was too big ->
 # split those blocks by house number / street word / rare address word; 40% shared no key but 90% share
 # two rare address words (mostly transliterated names) -> 'addr2' ignores the name entirely.
@@ -98,6 +104,11 @@ def build_keys(con, norm: str, keys_out: str) -> None:
         SELECT a.rid, a.tok, row_number() OVER (PARTITION BY a.rid ORDER BY d.df, a.tok) AS k
         FROM atoks a JOIN adf d USING (country, tok))
       WHERE k = 1;
+    CREATE OR REPLACE TEMP TABLE arare12 AS
+      SELECT rid, tok FROM (
+        SELECT a.rid, a.tok, row_number() OVER (PARTITION BY a.rid ORDER BY d.df, a.tok) AS k
+        FROM atoks a JOIN adf d USING (country, tok))
+      WHERE k <= 2;
     CREATE OR REPLACE TEMP TABLE arare2 AS
       SELECT rid, min(tok) || '|' || max(tok) AS pair FROM (
         SELECT a.rid, a.tok, row_number() OVER (PARTITION BY a.rid ORDER BY d.df, a.tok) AS k
@@ -130,14 +141,8 @@ def build_keys(con, norm: str, keys_out: str) -> None:
       SELECT entity_id, src, 'prehs', country || '|' || substr(name_concat, 1, 8) || '|' || house_no
         FROM r WHERE length(name_concat) >= 5 AND house_no <> ''
       UNION ALL
-      SELECT entity_id, src, 'skelhs', country || '|' || substr(name_skel, 1, 6) || '|' || house_no
-        FROM r WHERE length(name_skel) >= 4 AND house_no <> ''
-      UNION ALL
       SELECT entity_id, src, 'prest', country || '|' || substr(name_concat, 1, 8) || '|' || skey
         FROM r WHERE length(name_concat) >= 5 AND skey <> ''
-      UNION ALL
-      SELECT r.entity_id, r.src, 'skelat', r.country || '|' || substr(r.name_skel, 1, 4) || '|' || arare.tok
-        FROM r JOIN arare USING (rid) WHERE length(r.name_skel) >= 3
       UNION ALL
       SELECT r.entity_id, r.src, 'addr2', r.country || '|' || arare2.pair
         FROM r JOIN arare2 USING (rid)
@@ -147,6 +152,9 @@ def build_keys(con, norm: str, keys_out: str) -> None:
       UNION ALL
       SELECT r.entity_id, r.src, 'phonat', r.country || '|' || substr(r.name_phon, 1, 4) || '|' || arare.tok
         FROM r JOIN arare USING (rid) WHERE length(r.name_phon) >= 3
+      UNION ALL
+      SELECT r.entity_id, r.src, 'hsat', r.country || '|' || r.house_no || '|' || a.tok
+        FROM r JOIN arare12 a USING (rid) WHERE r.house_no <> ''
     ) TO '{keys_out}' (FORMAT parquet);
     """)
 
@@ -155,7 +163,7 @@ def build_candidates(con, keys: str, out_dir: str, n_buckets: int = 8) -> dict:
     """Pairs per key kind -> disk, then merged per S1-hash bucket (bounded memory)."""
     import os, shutil
     caps = " OR ".join(
-        f"(kind = '{k}' AND (n_t > {CAP_TARGETS[k]} OR n_s > {CAP_S1[k]}))" for k in KEYS)
+        f"(kind = '{k}' AND (n_t > {CAP_TARGETS[k]} OR n_s > {CAP_S1[k]}))" for k in BLOCK_KEYS)
     con.execute(f"""
     CREATE OR REPLACE TEMP TABLE blk AS
       SELECT kind, key,
@@ -168,7 +176,7 @@ def build_candidates(con, keys: str, out_dir: str, n_buckets: int = 8) -> dict:
     for d in (tmp, out_dir):
         shutil.rmtree(d, ignore_errors=True)
         os.makedirs(d)
-    for k in KEYS:
+    for k in BLOCK_KEYS:
         con.execute(f"""
         COPY (
           SELECT a.entity_id AS s1_id, b.entity_id AS cand_id, '{k}' AS kind
@@ -223,6 +231,46 @@ def recall_report(con, cands: str, gt: str) -> str:
     return "\n".join(lines)
 
 
+HOP_SEED_KEYS = 4   # a candidate sharing >= this many keys is 'strong' enough to link through
+HOP_GROUP_MAX = 20  # link groups larger than this are ignored (common names / addresses)
+
+
+def add_hops(con, norm: str, out_dir: str) -> int:
+    """Adds pairs (S1, t2) where t2 is a near-duplicate of a strong candidate t1 of that S1:
+    an S2 record in Devanagari and its S3 copy often match each other exactly even when
+    neither shares a key with the English S1 record."""
+    import glob
+    import os
+    con.execute(f"""
+    CREATE OR REPLACE TEMP TABLE lk AS
+      SELECT entity_id, k, kk FROM (
+        SELECT entity_id, 'p' AS k, country || '|' || name_phon AS kk FROM '{norm}'
+          WHERE src <> 'S1' AND length(name_phon) >= 3
+        UNION ALL SELECT entity_id, 'a', country || '|' || addr_clean FROM '{norm}'
+          WHERE src <> 'S1' AND length(addr_clean) >= 8
+        UNION ALL SELECT entity_id, 'h', country || '|' || house_no || '|' || substr(name_phon, 1, 3) FROM '{norm}'
+          WHERE src <> 'S1' AND house_no <> '' AND length(name_phon) >= 3)
+      QUALIFY count(*) OVER (PARTITION BY k, kk) BETWEEN 2 AND {HOP_GROUP_MAX}""")
+    added = 0
+    for f in sorted(glob.glob(f"{out_dir}/part*.parquet")):
+        tmp = f[:-8] + "_hop.parquet"
+        con.execute(f"""
+        COPY (
+          WITH c AS (SELECT * FROM '{f}'),
+          seeds AS (SELECT s1_id, cand_id FROM c WHERE len(string_split(keys, '|')) >= {HOP_SEED_KEYS}),
+          hop AS (SELECT DISTINCT s.s1_id, l2.entity_id AS cand_id
+                  FROM seeds s JOIN lk l1 ON l1.entity_id = s.cand_id
+                  JOIN lk l2 ON l2.k = l1.k AND l2.kk = l1.kk AND l2.entity_id <> l1.entity_id)
+          SELECT * FROM c
+          UNION ALL
+          SELECT s1_id, cand_id, 'hop' AS keys FROM (SELECT * FROM hop ANTI JOIN c USING (s1_id, cand_id))
+        ) TO '{tmp}' (FORMAT parquet)""")
+        n_new = con.execute(f"SELECT count(*) FROM read_parquet('{tmp}') WHERE keys = 'hop'").fetchone()[0]
+        os.replace(tmp, f)
+        added += n_new
+    return added
+
+
 def run(split: str, mem: str = None) -> None:
     mem = mem or default_mem()
     norm, cands, keys = _paths(split)
@@ -234,6 +282,7 @@ def run(split: str, mem: str = None) -> None:
     print(f"keys built {time.time() - t:.0f}s", flush=True)
     stats = build_candidates(con, keys, cands)
     print(f"candidates built {time.time() - t:.0f}s", flush=True)
+    print(f"hop pairs added: {add_hops(con, norm, cands):,} ({time.time() - t:.0f}s)", flush=True)
     for k, v in stats.items():
         print(f"  {k:<5} usable blocks={v['usable']:,}  uncapped pairs={v['raw_pairs']:,}")
     if split == "train":
