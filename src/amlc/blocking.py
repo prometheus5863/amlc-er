@@ -16,6 +16,11 @@ keys
   num    house number + rarest name token            "US|1303|yeager" (survives big 'addr'/'tok' blocks)
   full   whole name without spaces                   "US|pioneermedia" (common names, exact)
   tokat  rarest name token + rarest address word     "US|pioneer|burgess" (house-number noise, reordering)
+  prehs  name prefix + house number                  "US|pioneer|1303" (splits big 'pre' blocks)
+  skelhs skeleton prefix + house number              "India|snrs|3"
+  prest  name prefix + first street word             "US|pioneer|cattle"
+  skelat skeleton prefix + rarest address word       "India|snrs|thakkar" (transliterated names)
+  addr2  two rarest address words, name ignored      "India|chawl|thakkar" (garbled / transliterated names)
 The output has one row per (s1_id, cand_id) with `keys` = '|'-joined key names.
 """
 from __future__ import annotations
@@ -27,9 +32,15 @@ import duckdb
 
 from .paths import mem as default_mem, threads, work_dir
 
-KEYS = ("addr", "tok", "pre", "skel", "num", "full", "tokat")
-CAP_TARGETS = {"addr": 60, "tok": 150, "pre": 60, "skel": 40, "num": 60, "full": 200, "tokat": 80}  # max S2+S3 per block
-CAP_S1 = {"addr": 25, "tok": 60, "pre": 25, "skel": 15, "num": 25, "full": 80, "tokat": 30}          # max S1 per block
+KEYS = ("addr", "tok", "pre", "skel", "num", "full", "tokat",
+        "prehs", "skelhs", "prest", "skelat", "addr2")
+CAP_TARGETS = {"addr": 60, "tok": 150, "pre": 60, "skel": 40, "num": 60, "full": 200, "tokat": 80,
+               "prehs": 60, "skelhs": 60, "prest": 60, "skelat": 60, "addr2": 60}   # max S2+S3 per block
+CAP_S1 = {"addr": 25, "tok": 60, "pre": 25, "skel": 15, "num": 25, "full": 80, "tokat": 30,
+          "prehs": 25, "skelhs": 25, "prest": 25, "skelat": 25, "addr2": 25}         # max S1 per block
+# v2 keys (from the missed-pair breakdown): 60% of misses shared a name key whose block was too big ->
+# split those blocks by house number / street word / rare address word; 40% shared no key but 90% share
+# two rare address words (mostly transliterated names) -> 'addr2' ignores the name entirely.
 TOK_DF_MAX = 5000  # tokens more frequent than this never become 'tok' keys
 
 
@@ -69,6 +80,11 @@ def build_keys(con, norm: str, keys_out: str) -> None:
         SELECT a.rid, a.tok, row_number() OVER (PARTITION BY a.rid ORDER BY d.df, a.tok) AS k
         FROM atoks a JOIN adf d USING (country, tok))
       WHERE k = 1;
+    CREATE OR REPLACE TEMP TABLE arare2 AS
+      SELECT rid, min(tok) || '|' || max(tok) AS pair FROM (
+        SELECT a.rid, a.tok, row_number() OVER (PARTITION BY a.rid ORDER BY d.df, a.tok) AS k
+        FROM atoks a JOIN adf d USING (country, tok))
+      WHERE k <= 2 GROUP BY rid HAVING count(*) = 2;
 
     COPY (
       SELECT entity_id, src, 'addr' AS kind,
@@ -92,6 +108,21 @@ def build_keys(con, norm: str, keys_out: str) -> None:
       UNION ALL
       SELECT r.entity_id, r.src, 'tokat', r.country || '|' || rare.tok || '|' || arare.tok
         FROM r JOIN rare USING (rid) JOIN arare USING (rid)
+      UNION ALL
+      SELECT entity_id, src, 'prehs', country || '|' || substr(name_concat, 1, 8) || '|' || house_no
+        FROM r WHERE length(name_concat) >= 5 AND house_no <> ''
+      UNION ALL
+      SELECT entity_id, src, 'skelhs', country || '|' || substr(name_skel, 1, 6) || '|' || house_no
+        FROM r WHERE length(name_skel) >= 4 AND house_no <> ''
+      UNION ALL
+      SELECT entity_id, src, 'prest', country || '|' || substr(name_concat, 1, 8) || '|' || split_part(street, ' ', 1)
+        FROM r WHERE length(name_concat) >= 5 AND length(split_part(street, ' ', 1)) >= 3
+      UNION ALL
+      SELECT r.entity_id, r.src, 'skelat', r.country || '|' || substr(r.name_skel, 1, 4) || '|' || arare.tok
+        FROM r JOIN arare USING (rid) WHERE length(r.name_skel) >= 3
+      UNION ALL
+      SELECT r.entity_id, r.src, 'addr2', r.country || '|' || arare2.pair
+        FROM r JOIN arare2 USING (rid)
     ) TO '{keys_out}' (FORMAT parquet);
     """)
 

@@ -24,10 +24,12 @@ from .data import pq as pq_path
 from .features import FEATURES
 from .paths import output_dir, work_dir
 
-PARAMS = dict(objective="binary", learning_rate=0.1, num_leaves=127, min_data_in_leaf=100,
+import os as _os
+
+PARAMS = dict(objective="binary", learning_rate=float(_os.environ.get("AMLC_LR", "0.1")), num_leaves=127, min_data_in_leaf=100,
               feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=1.0,
               verbose=-1, num_threads=0, seed=42)
-ROUNDS = 500
+ROUNDS = int(_os.environ.get("AMLC_ROUNDS", "500"))  # Kaggle: AMLC_ROUNDS=1500 AMLC_LR=0.06
 
 
 def W(name):
@@ -57,7 +59,7 @@ def assign_targets(df: pd.DataFrame, prob_col="prob", margin: float = 0.0) -> pd
     return df[prob_col].where(df[prob_col] >= best - margin, 0.0)
 
 
-def train(frac: float = 1.0, k: int = 3) -> None:
+def train(frac: float = 1.0, k: int = int(_os.environ.get("AMLC_FOLDS", "3"))) -> None:
     from erharness import metric
     from erharness.analysis import oracles
     from erharness.decode import DecodeConfig

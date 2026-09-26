@@ -31,7 +31,7 @@ def _looks_like_raw(p: Path) -> bool:
 
 def raw_dir() -> Path:
     cands = [os.environ.get("AMLC_RAW"), _local_cfg().get("raw")]
-    cands += glob.glob("/kaggle/input/*") + glob.glob("/kaggle/input/*/*") + glob.glob("/kaggle/input/*/*/*")
+    cands += [str(Path(h).parent.parent) for h in glob.glob("/kaggle/input/**/train/train_source1.tsv", recursive=True)]
     cands += [str(REPO / "data" / "raw"), str(REPO / "data" / "raw" / "dataset")]
     for c in cands:
         if c and _looks_like_raw(Path(c)):
