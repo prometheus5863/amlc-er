@@ -48,9 +48,9 @@ _DEV_CONS = {
     "ष": "sh", "स": "s", "ह": "h", "ळ": "l", "क़": "q", "ख़": "kh", "ग़": "g", "ज़": "z", "ड़": "r", "ढ़": "rh",
     "फ़": "f", "य़": "y",
 }
-_DEV_VOW = {"अ": "a", "आ": "a", "इ": "i", "ई": "i", "उ": "u", "ऊ": "u", "ऋ": "ri", "ए": "e", "ऐ": "ai",
+_DEV_VOW = {"ऎ": "e", "ऒ": "o", "अ": "a", "आ": "a", "इ": "i", "ई": "i", "उ": "u", "ऊ": "u", "ऋ": "ri", "ए": "e", "ऐ": "ai",
             "ओ": "o", "औ": "au", "ऑ": "o", "ऍ": "e"}
-_DEV_MATRA = {"ा": "a", "ि": "i", "ी": "i", "ु": "u", "ू": "u", "ृ": "ri", "े": "e", "ै": "ai", "ो": "o",
+_DEV_MATRA = {"ॆ": "e", "ॊ": "o", "ा": "a", "ि": "i", "ी": "i", "ु": "u", "ू": "u", "ृ": "ri", "े": "e", "ै": "ai", "ो": "o",
               "ौ": "au", "ॉ": "o", "ॅ": "e"}
 _DEV_SIGN = {"ं": "n", "ँ": "n", "ः": "h", "्": "", "़": ""}
 _DEV_DIGITS = {chr(0x966 + i): str(i) for i in range(10)}
@@ -121,10 +121,11 @@ def transliterate(s: str) -> str:
     if not _INDIC_RE.search(s):
         return s
     s = s.translate(_TO_DEV)
-    return " ".join(_fix_translit_legal(_translit_word(w)) for w in s.split())
+    out = " ".join(_fix_translit_legal(_translit_word(w)) for w in s.split())
+    return re.sub(r"\blimit t\b", "limited", out)  # Tamil-script "limited" comes out as "limit t"
 
 
-_TR_LEGAL = [(re.compile(r"^pr[ae]?i?[vbw]h?[ae]?t[ae]?$"), "private"), (re.compile(r"^l[iy]m[iy]?t[ae]?d$"), "limited"),
+_TR_LEGAL = [(re.compile(r"^p[iy]?r[ae]?[iy]?[vbw]h?[ae]?t[ae]?$"), "private"), (re.compile(r"^pa[iy]r[ae]?t[ae]?$"), "private"), (re.compile(r"^l[iy]m[iy]?t[ae]?[dt]$"), "limited"),
              (re.compile(r"^t?[ae]?l[ae]?m[ae]?t[ae]?d$"), "limited"), (re.compile(r"^pr[ae]?a?$"), "pvt")]
 
 

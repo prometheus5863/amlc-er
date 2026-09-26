@@ -25,6 +25,12 @@ FILES = [
 ]
 
 
+# official row counts: a Kaggle copy that differs is not the official data
+EXPECTED_ROWS = {"train_source1": 2206821, "train_source2": 5034616, "train_source3": 5285603,
+                 "train_ground_truth": 2206821, "test_source1": 1732544, "test_source2": 4887273,
+                 "test_source3": 5082316}
+
+
 def _con(mem="1500MB"):
     con = duckdb.connect()
     con.execute(f"SET memory_limit='{mem}'; SET preserve_insertion_order=true; SET enable_progress_bar=false;")
@@ -69,6 +75,9 @@ def convert(force: bool = False) -> None:
         print(f"{name:<28} rows={rows:>10,}  {mb:7.1f} MB  {time.time() - t:5.1f}s  {ok}")
         if rows != lines:
             raise SystemExit(f"{name}: parsed {rows} rows but file has {lines} lines — inspect before continuing")
+        exp = EXPECTED_ROWS.get(name.split("/")[-1])
+        if exp and rows != exp:
+            raise SystemExit(f"{name}: {rows} rows, official data has {exp} — wrong or modified dataset")
 
 
 def load(name: str, dev: bool = False, columns=None) -> pd.DataFrame:

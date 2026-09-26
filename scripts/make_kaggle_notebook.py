@@ -9,14 +9,15 @@ nb.cells = [
 Runs the whole pipeline from the team repo and writes a **validated** `matching_results.tsv` + `candidate_pairs.tsv`.
 
 **Before running** (right-hand panel):
-1. **Add Input** → the team's private dataset (the 7 Parquet files, or the official TSV folder — both work).
+1. **Add Input** → search `amazon-ml-challenge-2026` → the dataset by **satwiksps** (its row counts match the official data; the pipeline re-checks them on every run).
 2. **Settings → Internet: On** (needed to clone the repo).
 3. **Add-ons → Secrets** → `GITHUB_TOKEN` = a GitHub token with read access to the repo (only needed while the repo is private).
 
-Then **Save Version → Save & Run All (Commit)**. It runs in the background (~1.5–2 h on CPU) and the files appear under **Output**.
+Then **Save Version → Save & Run All (Commit)**. It runs in the background (~3–4 h on CPU) and the files appear under **Output**.
 To try your own changes: push a branch and set `BRANCH` below."""),
-    code("""BRANCH = "baseline-v1"        # <- change to your branch
-SAMPLE = 0.1                   # share of Source-1 entities used for training
+    code("""BRANCH = "v2"                 # <- change to your branch
+SAMPLE = 0.2                   # share of Source-1 entities used for training (Kaggle RAM allows 0.2-0.3)
+ROUNDS, LR = 1500, 0.06        # LightGBM rounds cap (early stopping) and learning rate
 REPO = "prometheus5863/amlc-er\""""),
     code("""# clone into /tmp so the token never ends up in the saved notebook output
 import os, subprocess, sys
@@ -33,7 +34,8 @@ print(r.stderr.replace(token, "***") if token else r.stderr)
 print(subprocess.run(["git", "-C", "/tmp/amlc-er", "log", "--oneline", "-1"], capture_output=True, text=True).stdout)"""),
     code("""!pip install -q duckdb rapidfuzz lightgbm 2>&1 | tail -1"""),
     code("""# run the pipeline (every step prints progress; finished steps are skipped on re-runs)
-env = {**os.environ, "PYTHONPATH": "/tmp/amlc-er/src:/tmp/amlc-er"}
+env = {**os.environ, "PYTHONPATH": "/tmp/amlc-er/src:/tmp/amlc-er",
+       "AMLC_ROUNDS": str(ROUNDS), "AMLC_LR": str(LR)}
 p = subprocess.Popen([sys.executable, "-u", "-m", "amlc.pipeline", "all", "--sample", str(SAMPLE)],
                      cwd="/tmp/amlc-er", env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 for line in p.stdout:
