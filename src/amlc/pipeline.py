@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 
-from . import blocking, features, model, prep
+from . import blocking, features, model, prep, rerank
 from .data import pq as pq_path
 from .paths import REPO, output_dir, parquet_dir, raw_dir, work_dir
 
@@ -103,6 +103,10 @@ def main(argv):
         step("predict + decode", str(output_dir() / "matching_results.tsv"), model.predict, force)
         ok = validate()
         print("VALIDATOR:", "PASS" if ok else "FAILED — see messages above", flush=True)
+    try:   # inputs for the GPU re-ranker notebook (rerank.py); never fails the run
+        rerank.export()
+    except Exception as e:
+        print(f"[warn] rerank export skipped: {e!r}", flush=True)
     save_artifacts()
     print(f"pipeline finished in {(time.time() - t0) / 60:.1f} min", flush=True)
 
