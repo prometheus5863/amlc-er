@@ -35,7 +35,7 @@ if r.returncode != 0:
     hint = ("Could not resolve host / network error -> Settings: Internet ON (phone-verified account)" if "resolve" in err or "unable to access" in err
             else "Authentication / not found -> Add-ons > Secrets: GITHUB_TOKEN must exist AND be ticked for this notebook; "
                  "token needs the 'repo' scope; the branch name must exist")
-    raise RuntimeError(f"git clone failed:\n{err}\nLikely fix: {hint}")
+    raise RuntimeError(f"git clone failed:\\n{err}\\nLikely fix: {hint}")
 print(subprocess.run(["git", "-C", "/tmp/amlc-er", "log", "--oneline", "-1"], capture_output=True, text=True).stdout)"""),
     code("""!pip install -q duckdb rapidfuzz lightgbm 2>&1 | tail -1"""),
     code("""# run the pipeline (every step prints progress; finished steps are skipped on re-runs)
