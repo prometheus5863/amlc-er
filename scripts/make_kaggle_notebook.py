@@ -17,7 +17,7 @@ Then **Save Version → Save & Run All (Commit)**. It runs in the background (~3
 To try your own changes: push a branch and set `BRANCH` below."""),
     code("""BRANCH = "v3"                 # <- change to your branch
 SAMPLE = 0.2                   # share of Source-1 entities used for training (Kaggle RAM allows 0.2-0.3)
-ROUNDS, LR = 1500, 0.06        # LightGBM rounds cap (early stopping) and learning rate
+ROUNDS, LR = 1500, 0.1         # LightGBM rounds cap (early stopping) and learning rate (v2 at 0.06 hit the cap)
 REPO = "prometheus5863/amlc-er\""""),
     code("""# clone into /tmp so the token never ends up in the saved notebook output
 import os, subprocess, sys
