@@ -35,6 +35,10 @@ FEATURES = [
     # v3: sound-key similarity, global name frequency (is this exact name shared by other S1
     # businesses?), which side lacks an address, house-number near-misses (2827 vs 2825)
     "n_phon", "nf_s1_a", "nf_s1_b", "nf_s1_lg_b", "nf_t_b", "addr_empty_s1", "addr_empty_t", "house_near",
+    # v5 (error analysis): the data's noise TRUNCATES house numbers (4938 -> 493, 43a -> 3a: 89-94% true)
+    # while a same-length one-digit change (2311 vs 2318) is usually a different business (42% true);
+    # house_near lumped both together. Same idea for the name: one inserted char is a weaker sign.
+    "house_rel", "n_edit1",
     "is_s3", "n_keys", *[f"k_{k}" for k in KEYS],
     "s1_ncands", "t_ncands", "rank_in_s1", "gap_to_best_s1",
 ]
@@ -133,6 +137,8 @@ def pair_features(df: pd.DataFrame, idf: dict) -> pd.DataFrame:
     near = (hd <= 1) | np.array([bool(a) and bool(b) and (a.startswith(b) or b.startswith(a) or a.endswith(b) or b.endswith(a))
                                  for a, b in zip(ha, hb)])
     f["house_near"] = np.where((ha == "") | (hb == ""), -1, np.where(ha == hb, 2, near.astype(int))).astype(np.int8)
+    f["house_rel"] = house_rel(ha, hb, hd)
+    f["n_edit1"] = name_edit1(df.name_concat_a.values, df.name_concat_b.values)
 
     f["is_s3"] = (df.cand_id.str[:2].values == "S3").astype(np.int8)
     keys = [set(s.split("|")) for s in df["keys"].values]
@@ -140,6 +146,35 @@ def pair_features(df: pd.DataFrame, idf: dict) -> pd.DataFrame:
         f[f"k_{k}"] = np.array([k in s for s in keys], np.int8)
     f["n_keys"] = f[[f"k_{k}" for k in KEYS]].sum(axis=1).astype(np.int8)
     return f
+
+
+def house_rel(ha, hb, hd=None) -> np.ndarray:
+    """0 one empty, 1 equal, 2 prefix (truncated), 3 suffix, 4 same length & 1 digit changed, 5 other 1-edit, 6 different."""
+    if hd is None:
+        hd = process.cpdist(list(ha), list(hb), scorer=Levenshtein.distance, workers=-1)
+    out = np.full(len(ha), 6, np.int8)
+    for i, (x, y) in enumerate(zip(ha, hb)):
+        if not x or not y:
+            out[i] = 0
+        elif x == y:
+            out[i] = 1
+        elif x.startswith(y) or y.startswith(x):
+            out[i] = 2
+        elif x.endswith(y) or y.endswith(x):
+            out[i] = 3
+        elif hd[i] == 1:
+            out[i] = 4 if len(x) == len(y) else 5
+    return out
+
+
+def name_edit1(na, nb) -> np.ndarray:
+    """0 equal, 1 target lost a char, 2 target gained a char, 3 one char replaced, 4 more than one edit."""
+    d = process.cpdist(list(na), list(nb), scorer=Levenshtein.distance, workers=-1)
+    out = np.where(d == 0, 0, 4).astype(np.int8)
+    tag = {"delete": 1, "insert": 2, "replace": 3}
+    for i in np.flatnonzero(d == 1):
+        out[i] = tag[Levenshtein.editops(na[i], nb[i])[0].tag]
+    return out
 
 
 def add_context(f: pd.DataFrame) -> pd.DataFrame:
