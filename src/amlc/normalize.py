@@ -10,6 +10,7 @@ Main entry point: `normalize_frame(df)` adds these columns to a source table:
   name_core      name without legal forms / honorifics (space-joined tokens)
   name_concat    name_core with spaces removed ("yeagerstaking")
   name_skel      consonant skeleton of name_concat (robust to vowel/translit noise)
+  name_phon      sound key of name_concat (English words written in Indian scripts)
   legal          canonical legal-form class ("llc", "inc", "pvt_ltd", "sarl", ...)
   is_domain      name looked like a website ("s6first.com", "@yeagerstaking")
   is_translit    name was in Devanagari and was transliterated
@@ -261,6 +262,23 @@ def skeleton(s: str) -> str:
     return re.sub(r"(.)\1+", r"\1", s)
 
 
+_PH_RULES = [(re.compile(a), b) for a, b in [
+    (r"igh", "ai"), (r"tu([rn])", r"chu\1"),          # future/fortune -> fyuchar/forchyun
+    (r"ck", "k"), (r"ph", "f"), (r"c([eiy])", r"s\1"), (r"g([eiy])", r"j\1"),
+    (r"m([pbf])", r"n\1"),            # imphotek ~ infotech
+    (r"[cq]", "k"), (r"x", "ks"), (r"z", "j"), (r"w", "v"),
+    (r"[aeiouyh]", ""), (r"(.)\1+", r"\1")]]
+
+
+def phonetic(s: str) -> str:
+    """Sound key that survives English words written in Indian scripts:
+    'dayanamiktrading' ~ 'dynamictrading', 'skailajistikas' ~ 'skylogistics',
+    'blaikinfotek' ~ 'blackinfotech' (all -> the same key)."""
+    for rx, rep in _PH_RULES:
+        s = rx.sub(rep, s)
+    return s
+
+
 # --------------------------------------------------------------------------- #
 # addresses
 # --------------------------------------------------------------------------- #
@@ -347,6 +365,7 @@ def normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     out["alias_core"] = [x[5] for x in nm]
     out["name_concat"] = out.name_core.str.replace(" ", "", regex=False)
     out["name_skel"] = [skeleton(x) for x in out.name_concat.to_numpy()]
+    out["name_phon"] = [phonetic(x) for x in out.name_concat.to_numpy()]
     ad = [norm_address(a, c) for a, c in zip(out.business_address.to_numpy(), out.country.to_numpy())]
     out["addr_clean"] = [x[0] for x in ad]
     out["house_no"] = [x[1] for x in ad]

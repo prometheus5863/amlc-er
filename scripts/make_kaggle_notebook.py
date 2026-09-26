@@ -15,9 +15,9 @@ Runs the whole pipeline from the team repo and writes a **validated** `matching_
 
 Then **Save Version → Save & Run All (Commit)**. It runs in the background (~3–4 h on CPU) and the files appear under **Output**.
 To try your own changes: push a branch and set `BRANCH` below."""),
-    code("""BRANCH = "v2"                 # <- change to your branch
+    code("""BRANCH = "v3"                 # <- change to your branch
 SAMPLE = 0.2                   # share of Source-1 entities used for training (Kaggle RAM allows 0.2-0.3)
-ROUNDS, LR = 1500, 0.06        # LightGBM rounds cap (early stopping) and learning rate
+ROUNDS, LR = 1500, 0.1         # LightGBM rounds cap (early stopping) and learning rate (v2 at 0.06 hit the cap)
 REPO = "prometheus5863/amlc-er\""""),
     code("""# clone into /tmp so the token never ends up in the saved notebook output
 import os, subprocess, sys
@@ -30,7 +30,12 @@ except Exception:
 url = f"https://{token + '@' if token else ''}github.com/{REPO}.git"
 subprocess.run(["rm", "-rf", "/tmp/amlc-er"])
 r = subprocess.run(["git", "clone", "--depth", "1", "-b", BRANCH, url, "/tmp/amlc-er"], capture_output=True, text=True)
-print(r.stderr.replace(token, "***") if token else r.stderr)
+err = r.stderr.replace(token, "***") if token else r.stderr
+if r.returncode != 0:
+    hint = ("Could not resolve host / network error -> Settings: Internet ON (phone-verified account)" if "resolve" in err or "unable to access" in err
+            else "Authentication / not found -> Add-ons > Secrets: GITHUB_TOKEN must exist AND be ticked for this notebook; "
+                 "token needs the 'repo' scope; the branch name must exist")
+    raise RuntimeError(f"git clone failed:\n{err}\nLikely fix: {hint}")
 print(subprocess.run(["git", "-C", "/tmp/amlc-er", "log", "--oneline", "-1"], capture_output=True, text=True).stdout)"""),
     code("""!pip install -q duckdb rapidfuzz lightgbm 2>&1 | tail -1"""),
     code("""# run the pipeline (every step prints progress; finished steps are skipped on re-runs)
